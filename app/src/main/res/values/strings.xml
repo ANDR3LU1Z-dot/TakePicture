@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Take Picture</string>
+    <string name="permissions_request">Se você não aceitar as permissões, as funcionalidades do app ficarão restristas</string>
+</resources>

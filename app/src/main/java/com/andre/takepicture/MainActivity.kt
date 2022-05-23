@@ -1,0 +1,241 @@
+package com.andre.takepicture
+
+import android.app.Activity
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import com.andre.takepicture.databinding.ActivityMainBinding
+import com.google.android.material.snackbar.Snackbar
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
+import java.util.*
+
+private const val REQUEST_CODE = 42
+
+class MainActivity : AppCompatActivity() {
+     final val TAG = "MainActivity"
+    var photoFile: File? = null  // local file for sharing with camera app
+    var publicUri: Uri? = null   // content URI of the saved image file on public storage
+     var photo: Bitmap? = null
+     lateinit var binding: ActivityMainBinding
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        val root = binding.root
+
+        setContentView(root)
+        //Solicitar permissões
+        resultLauncherForPermission.launch(neededRuntimePermissions)
+
+        binding.btnTakePicture.setOnClickListener { openCameraAppToPickPhoto()
+        }
+
+    }
+
+     fun openCameraAppToPickPhoto() {
+        val view = binding.root
+
+        photoFile = prepareEmptyPhotoFile("photo.jpg")
+        if (photoFile == null) {
+            Snackbar.make(view, "Erro", Snackbar.LENGTH_SHORT).show()
+            return
+        }
+
+
+        // interact with camera app
+        val photoUri = getUriFromFile(photoFile!!)
+        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
+        if (cameraIntent.resolveActivity(packageManager) != null) {
+            // call camera app using registerForActivityResult by passing contract,
+            // to handle the result value(OK or CANCELED) after camera app is finished.
+            resultLauncherForCameraResult.launch(cameraIntent)
+
+
+        } else {
+            Snackbar.make(view, "Camera desabilitada", Snackbar.LENGTH_SHORT).show()
+        }
+
+
+    }
+
+     fun saveImageToPublic() {
+        if (photoFile == null) {
+            return
+        }
+
+        // make empty target file on shareable media storage
+        val targetFilename = "publicImage_${Date().time}.jsp"
+        publicUri = makeEmptyTargetFile(targetFilename)
+        if (publicUri == null) {
+            return
+        }
+
+        Snackbar.make(binding.root, "content uri=${publicUri}", Snackbar.LENGTH_SHORT).show()
+        makeCopycat(photoFile!!, publicUri!!)
+//        photoFile!!.delete()
+//        photoFile = null
+    }
+
+     fun loadImageFromPublic(image: Bitmap) {
+        if (publicUri == null) {
+            return
+        }
+
+//         val image = SecondActivity().
+//        binding.imagePublic.setImageURI(publicUri)
+
+    }
+
+     fun getUriFromFile(photoFile: File): Uri? {
+        return FileProvider.getUriForFile(this, "com.andre.takepicture.fileprovider", photoFile)
+    }
+
+     fun prepareEmptyPhotoFile(filename: String): File? {
+
+        val storageDirectory = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+
+        var tempFile: File? = null
+        try {
+            tempFile = File.createTempFile(filename, ".jpg", storageDirectory)
+        } catch (e: IOException) {
+            Log.d(TAG, "prepareEmptyPhotoFile: ${e.message}")
+        }
+        return tempFile
+    }
+
+    // region:- Activity Result Handler
+    //  to handle the result value(ok or cancel) after camera app is finished
+
+     val resultLauncherForCameraResult =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                Log.d(TAG, ": RESULT_OK")
+                saveImageToPublic()
+                    startActivity(Intent(this, SecondActivity::class.java))
+//                Intent(this, SecondActivity::class.java).also{
+//                    it.putExtra("EXTRA_IMAGE", getUriFromFile(photoFile!!))
+//                    startActivity(it)
+//                }
+//                binding.imageView.setImageURI(getUriFromFile(photoFile!!))
+            } else {
+                Log.d(TAG, ": RESULT_CANCELED")
+                photoFile?.delete()
+                photoFile = null
+            }
+        }
+
+
+     fun makeEmptyTargetFile(targetFilename: String): Uri? {
+        Log.d(TAG, "makeEmptyTargetFile: targetFilename=${targetFilename}")
+
+        // make empty target file on public storage
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return makeEmptyTargetFile_on10plus(targetFilename)  // using relative path
+        } else {
+            return makeEmptyTargetFile_below10(targetFilename)   // using absolute pathname
+        }
+    }
+
+     fun makeEmptyTargetFile_on10plus(targetFilename: String): Uri? {
+        val relativePath =
+            Environment.DIRECTORY_PICTURES + File.separatorChar + getString(R.string.app_name)
+        Log.d(TAG, "makeEmptyTargetFile_on10plus: relativePath=${relativePath}")
+
+        val contentValues = ContentValues()
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, targetFilename)
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)  // <<< see here
+
+        val contentUri =
+            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        return contentUri
+    }
+
+     fun makeEmptyTargetFile_below10(targetFilename: String): Uri? {
+        val publicDirectory =
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val absolutePathname = "${publicDirectory.absolutePath}/${targetFilename}"
+        Log.d(TAG, "makeEmptyTargetFile_below10: absolutePathname=${absolutePathname}")
+
+        val contentValues = ContentValues()
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, targetFilename)
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        contentValues.put(MediaStore.MediaColumns.DATA, absolutePathname)  // <<< see here
+
+        val contentUri =
+            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        return contentUri
+    }
+
+     fun makeCopycat(photoFile: File, publicUri: Uri) {
+        val source = FileInputStream(photoFile)
+        // can not directly convert URI to file on Android 10,
+        // so need to use contentResolver
+        val pfd = contentResolver.openFileDescriptor(publicUri, "w")
+        try {
+            pfd?.use {
+                val target = FileOutputStream(pfd.fileDescriptor)
+                val buffer = ByteArray(4096)
+                var length: Int
+                while ((source.read(buffer).also { length = it }) > 0) {
+                    target.write(buffer, 0, length)
+                }
+                target.flush()
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "makeCopycat: ${e.message}")
+        }
+    }
+
+    // region:- Routine: permission, view binding
+    //  view binding and requesting runtime permission(s)
+    //
+    // permission:
+    // for requesting runtime permission(s) using new API
+     val neededRuntimePermissions = arrayOf(android.Manifest.permission.CAMERA)
+     val resultLauncherForPermission =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            permissions.entries.forEach {
+                Log.d(TAG, ": registerForActivityResult: ${it.key}=${it.value}")
+
+                // if any permission is not granted...
+                if (!it.value) {
+                    // do anything if needed: ex) display about limitation
+                    Snackbar.make(binding.root, R.string.permissions_request, Snackbar.LENGTH_SHORT)
+                        .show()
+                }
+            }
+        }
+
+
+    /*
+    Metodo para pegar o resultado da activity
+     */
+//    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+//
+//        if(requestCode == REQUEST_CODE && resultCode ==Activity.RESULT_OK){
+//            val takenImage = data?.extras?.get("data") as Bitmap
+//            binding.imageView.setImageBitmap(takenImage)
+////            startActivity(Intent(this,SecondActivity(takenImage)::class.java))
+//        } else {
+//            super.onActivityResult(requestCode, resultCode, data)
+//        }
+//
+//    }
+
+
+}
